@@ -7,7 +7,7 @@
 #include <tensorflow/c/c_api.h>
 #include <opencv2/opencv.hpp>
 
-int main()
+void example_sr()
 {
     /* https://int-i.github.io/cpp/2020-11-18/libtensorflow/ */
     // Show version information of the tensorflow
@@ -107,6 +107,137 @@ int main()
     TF_DeleteSession(session, status);
     TF_DeleteGraph(graph);
     TF_DeleteStatus(status);
+}
+
+void example_classification()
+{
+    /* https://int-i.github.io/cpp/2020-11-18/libtensorflow/ */
+    // Show version information of the tensorflow
+    std::cout << "TensorFlow Version: " << TF_Version() << std::endl;
+
+    // Do initializations for tensorflow session
+    auto* run_options = TF_NewBufferFromString("", 0);
+    auto* session_options = TF_NewSessionOptions();
+    auto* graph = TF_NewGraph();
+    auto* status = TF_NewStatus();
+    std::array<char const*, 1> tags{ "serve" };
+
+    // Load the tensorflow model
+    const std::string model_path = "../../classification/flower_classification";
+    auto* session = TF_LoadSessionFromSavedModel(session_options, run_options,
+        model_path.c_str(), tags.data(), tags.size(),
+        graph, nullptr, status);
+    if (TF_GetCode(status) != TF_OK) {
+        std::cout << TF_Message(status) << '\n';
+    }
+
+    // Define network operations
+    const std::string input_op_name = "serving_default_sequential_1_input";
+    auto* input_op = TF_GraphOperationByName(graph, input_op_name.c_str());
+    if (input_op == nullptr) {
+        std::cout << "Failed to find graph operation\n";
+    }
+    const std::string output_op_name = "StatefulPartitionedCall";
+    auto* output_op = TF_GraphOperationByName(graph, output_op_name.c_str());
+    if (output_op == nullptr) {
+        std::cout << "Failed to find graph operation\n";
+    }
+    std::array<TF_Output, 1> input_ops = { TF_Output{ input_op, 0 } };
+    std::array<TF_Output, 1> output_ops = { TF_Output{ output_op, 0 } };
+
+    // Load an input image
+    cv::Mat daisy = cv::imread("../../classification/daisy0.jpg");          // class 0
+    cv::Mat dandelion = cv::imread("../../classification/dandelion6.jpg");          // class 1
+    cv::Mat roses = cv::imread("../../classification/roses7.jpg");          // class 2
+    cv::Mat sunflowers = cv::imread("../../classification/sunflowers2.jpg");          // class 3
+    cv::Mat tulips = cv::imread("../../classification/tulips5.jpg");          // class 4
+    daisy.convertTo(daisy, CV_32F);
+    dandelion.convertTo(dandelion, CV_32F);
+    roses.convertTo(roses, CV_32F);
+    sunflowers.convertTo(sunflowers, CV_32F);
+    tulips.convertTo(tulips, CV_32F);
+
+    // Set input data
+    cv::Mat* img = &sunflowers;
+    std::array<std::array<std::array<float, 3>, 180>, 180> x;
+    float* img_ptr = reinterpret_cast<float*>(img->data);
+    for (int i = 0; i < img->rows; i++)
+    {
+        for (int j = 0; j < img->cols; j++)
+        {
+            for (int c = 0; c < img->channels(); c++)
+            {
+                x[i][j][c] = img_ptr[i * img->cols * img->channels() + j * img->channels() + c];
+            }
+        }
+    }
+    std::vector<std::array<std::array<std::array<float, 3>, 180>, 180>> inputs{ x };
+    std::array<int64_t, 4> const dims{ static_cast<int64_t>(inputs.size()), 180, 180, 3 };
+    void* data = (void*)inputs.data();
+    std::size_t const ndata = inputs.size() * 180 * 180 * 3 * TF_DataTypeSize(TF_FLOAT);
+    auto const deallocator = [](void*, std::size_t, void*) {}; // unused deallocator because of RAII
+    auto* input_tensor = TF_NewTensor(TF_FLOAT, dims.data(), dims.size(), data, ndata, deallocator, nullptr);
+    std::array<TF_Tensor*, 1> input_values{ input_tensor };
+    std::array<TF_Tensor*, 1> output_values{};
+
+    // Run the session
+    TF_SessionRun(session,
+        run_options,
+        input_ops.data(), input_values.data(), input_ops.size(),
+        output_ops.data(), output_values.data(), output_ops.size(),
+        nullptr, 0,
+        nullptr,
+        status);
+    if (TF_GetCode(status) != TF_OK) {
+        std::cout << TF_Message(status) << '\n';
+    }
+
+    // Check the results
+    auto* output_tensor = static_cast<std::array<float, 5> *>(TF_TensorData(output_values[0]));
+    std::vector<std::array<float, 5>> outputs{ output_tensor, output_tensor + inputs.size() };
+    float max = outputs[0][0];
+    int argmax = 0;
+    for (int i = 0; i < 5; i++)
+    {
+        std::cout << outputs[0][i];         // classification result
+        if (i == 4)
+        {
+            std::cout << std::endl;
+        }
+        else
+        {
+            std::cout << ",";
+        }
+        if (max < outputs[0][i])
+        {
+            max = outputs[0][i];
+            argmax = i;
+        }
+    }
+    
+    // Show the results
+    switch (argmax)
+    {
+    case 0: std::cout << "classification result : daisy" << std::endl; break;
+    case 1: std::cout << "classification result : dandelion" << std::endl; break;
+    case 2: std::cout << "classification result : roses" << std::endl; break;
+    case 3: std::cout << "classification result : sunflowers" << std::endl; break;
+    case 4: std::cout << "classification result : tulips" << std::endl; break;
+    }
+
+    // Clear resources
+    TF_DeleteTensor(input_values[0]);
+    TF_DeleteTensor(output_values[0]);
+    TF_DeleteBuffer(run_options);
+    TF_DeleteSessionOptions(session_options);
+    TF_DeleteSession(session, status);
+    TF_DeleteGraph(graph);
+    TF_DeleteStatus(status);
+}
+
+int main()
+{
+    example_classification();
 }
 
 // 프로그램 실행: <Ctrl+F5> 또는 [디버그] > [디버깅하지 않고 시작] 메뉴
